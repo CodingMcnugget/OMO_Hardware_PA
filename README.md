@@ -1,4 +1,4 @@
-# OMO_Hardware_PA
+# OMO_Hardware_AP
 
 
 > **目标（Role & Goal）**  
