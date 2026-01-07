@@ -1,440 +1,383 @@
-# OMO_Hardware_AP
+# BOM
 
+**版本/Version**：v0.2（整理版）
 
-> **目标（Role & Goal）**  
-> 。请依据以下**完整规格**，为“Waybox”交付：可量产的 **CM4 载板**（Compute Module 4 Baseboard）、**系统镜像与驱动配置**、**产测方案与文档**。交付后，插入 **SIM/eSIM** 上电即可联网；屏幕仅显示**表情动画**；手机端承担主 OS 与复杂 UI/算力，通过 **BLE** 与设备同步。
+**日期/Date**：2026-01-06（America/Los_Angeles）
 
----
+**范围/Scope**：电子料 BOM（Electronics BOM）估算 + 整机 COGS（Cost of Goods Sold）估算 + Plan B 备选 + 全球供应/中美风险 + 良率（Yield/FPY）风险 + 毛利率（Gross Margin）估算
 
-## 产品定位（必须遵守）
-- 设备端：表情显示（仅表情动画，无复杂 GUI）、语音 I/O（拾音/播音）、**双路摄像头采集**与**视频推流**、BLE/Wi-Fi/蜂窝连接；本地承担主要交互逻辑与 AI 算力。
-- 手机端（伴侣应用层）：主要负责 **账号登录/认证**、**用户查看历史状态**、**服务订阅与付费管理**；作为用户入口与管理控制台。设备与手机通过 **BLE** 进行控制与状态同步。
-- 量产：小/中批量直接使用 **CM4 + 自研载板**；大批量阶段再评估全定制 SoC（本项目不展开）。
+**计价口径/Pricing Basis**：深圳供应链（LCSC/嘉立创等）公开价锚点 + 中国 B2B 常见报价区间（用于估算；最终以 RFQ/合同价为准）
 
-
-## 设备端 vs 手机端定位对比
-
-| 模块 | 设备端（Waybox 硬件） | 手机端（Companion App / 管理端） |
-|------|----------------------|---------------------------------|
-| **定位** | 主执行单元（AI 主机 / 外设） | 用户入口 & 管理控制台 |
-| **主要职责** | - 表情显示（仅表情动画）<br>- 语音 I/O（拾音/播音）<br>- 双摄像头采集 & 视频推流<br>- 本地 AI 算力与实时交互 | - 账号登录 / 认证<br>- 用户查看历史状态 / 数据<br>- 订阅服务 / 付费管理<br>- 设备状态展示与基础控制 |
-| **通信方式** | Wi-Fi / 蜂窝：与云端交互<br>BLE：与手机实时同步 | BLE：下发控制命令 & 接收设备状态 |
-| **算力分工** | 执行复杂交互、实时多模态处理（语音/视频/表情/推流） | 不承担主算力，仅做管理和展示 |
-| **用户交互** | 语音 + 表情动画（实时） | App 界面（历史数据、设置、订阅） |
-| **角色类比** | “外设 + 本地 AI 大脑” | “遥控器 + 账户中心” |
-
+**需求约束/Constraints**：单路摄像头（Single camera）；单 SoC + 高性能 MCU（SoC + High-performance MCU）；保留语音 I/O（Audio I/O）；保留 DPI（RGB 并口）屏幕（DPI/RGB Parallel）；默认保留 4G 蜂窝通信（LTE module）
 
 ---
 
-## 硬件需求总表（必须实现）
-| 模块 | 选型 / 接口 | 软件支持 | 备注 |
-|---|---|---|---|
-| **主控（SoM）** | Raspberry Pi Compute Module 4（CM4，1~4GB RAM，**32GB eMMC**） | Raspberry Pi OS / Yocto / Buildroot | 工业级 SoM，长供货周期；双摄、DPI、I²S、USB、BLE/Wi‑Fi |
-| **存储（Storage）** | **32GB eMMC**（随 CM4 机型集成） | eMMC 驱动 + Linux FS | 系统镜像、日志、缓存、用户数据 |
-| **显示（Display）** | RGB666 TFT（4.3″~7″），**DPI 并口** | KMS / `vc4-kms-dpi-generic`；LVGL/Qt | 仅表情动画；提供 `config.txt`/DT overlay 与时序参数 |
-| **摄像头（Camera）** | 2 × MIPI‑CSI（CAM0 2‑lane + CAM1 4‑lane） | libcamera / V4L2 / FFmpeg / GStreamer | 双路采集 + **H.264 硬编**；支持 RTSP/WebRTC 推流 |
-| **音频输入（Mic In）** | **PDM 双麦阵列（DMIC）** 或 PDM→I²S/PCM 转换前端 | ALSA + VAD/唤醒词 | 若无 PDM 前端，可选 I²S 数字麦 |
-| **音频输出（Spk Out）** | I²S → 数字功放（如 MAX98357A） → 喇叭 | ALSA / PipeWire | 提示音/语音；功放与数字/射频地分区 |
-| **无线连接（BLE/Wi‑Fi）** | CM4 自带 | BlueZ / wpa_supplicant | BLE：控制/OTA；Wi‑Fi：调试/局域网 |
-| **蜂窝（Cellular，可选 Pro）** | USB 4G/5G（Quectel EC25/EG25/EC200/RM5xx 等） | ModemManager / `qmi_wwan`/`cdc_mbim`/`uqmi` | **同时预留 nano‑SIM + eSIM 焊盘**；USB 口供电能力充足 |
-| **电源管理（PMIC）** | 1 节锂电 + 路径管理（如 BQ25895）+ 升压 5V | 电池/电量驱动 | USB‑C 充电；电量检测与 NTC；背光恒流可调 |
-| **扩展接口（I/O）** | USB 2.0 Host / GPIO / I²C / UART | Linux 驱动齐全 | 触控/传感器/调试；预留产测接口与关键测试点 |
-| **安全/OTA** | BLE OTA + **A/B rootfs** | 自研 OTA 管理 | BLE 分块传输；系统失败自动回滚与日志保留 |
+## 变更记录（Change Log）
+
+- **v0.2**：显示子系统档位定义更新为“**4.3" 固定**（按分辨率/亮度分档）”，并在**成本/毛利**部分给出对应的**修正口径与敏感性说明**（见第 5、8 节）。
+    - 说明：文中仍保留原先“4.3/5/7 英寸”分档的内容作为历史假设与对照，不删除任何信息，仅在成本模型处补充“以新档位为准”的修正说明。
 
 ---
 
-## 电气/版图设计要求（关键点必须满足）
-1. **CSI‑2（MIPI‑CSI）**：100 Ω 差分、对内等长、过孔最少、连续参考地；CAM0 2‑lane、CAM1 4‑lane；统一 22‑pin FFC 座，方向与丝印一致。  
-2. **DPI（RGB666）**：18 条 RGB 数据 + HS/VS/DE/CLK；同组等长并控制时钟相对延迟；背光恒流独立供电与地分区。  
-3. **USB 2.0（蜂窝）**：90 Ω 差分，近端 ESD 保护，线长最短、避开噪声区；供电支路满足发射峰值电流（4G 可达 2 A）。  
-4. **SIM/eSIM**：nano‑SIM 卡座 + eUICC 焊盘并存；SIM_DATA/SIM_CLK/SIM_RST 近模组布线、ESD 保护；支持 1.8 V/3.0 V。  
-5. **功耗与供电**：蜂窝模组独立低阻电源路径（建议带开关以便硬断电），输入大电容（≥470 µF 低 ESR）+ 局部去耦。  
-6. **射频/天线（RF/Antenna）**：u.FL/IPEX，Π 型匹配位；天线净空≥10 mm，避金属与大电流回流路径；提供驻波/回损测试。  
-7. **音频/EMI**：功放电源加大电流退耦与 LC 滤波；音频与射频/视频数字区隔离，单点汇接；I²S 走线等长+地护。  
-8. **调试/测试点**：USB D+/D-、PWRKEY/RESET/STATUS、主 UART、蜂窝支路电流取样电阻（0.01–0.02 Ω）测试点。  
-9. **机械/热**：提供 3D 结构、模组与天线位置、散热路径与热仿简报；外壳对天线衰减评估。  
+## 0. 结论摘要（Executive Summary）
+
+- **目标成本（Target Cost）**：在“**带 4G（LTE）+ 单摄 + 4.3" DPI 屏**”前提下，**电子料 BOM（Electronics BOM）做到约 28~31 美金**是合理可达的；若把**PCB/SMT、整机组装、外壳、附件、包装**也算进 COGS，则整机 **COGS 约 42~60 美金（按低/中/高配置）**。
+- **核心选型方向（Key Selections）**：
+    - 主控 **SoC（System-on-Chip）**：Allwinner **V833**（Linux/视频编解码/CSI/LCD）——LCSC 可查到 **100+ 单价约 $4.1037** 的锚点。 [LCSC Electronics](https://www.lcsc.com/product-detail/C3036462.html?utm_source=chatgpt.com)
+    - 高性能 **MCU（Microcontroller Unit）**：Espressif **ESP32-S3（BLE/Wi-Fi/协处理/低功耗守护）**——LCSC 可查到 **1000+ 单价约 $2.2053** 的锚点。 [LCSC Electronics](https://www.lcsc.com/product-detail/C2913196.html?utm_source=chatgpt.com)
+    - 蜂窝 **4G 模组（LTE Cat.1 module）**：Quectel **EC200U**（USB、3.3~4.3V、Linux 驱动生态）——深圳嘉立创商城参考价 **¥59.98**（作为成本锚点；以实际询价为准）。
+- **Plan B**：关键件（4G 模组/PMIC/摄像头/屏幕/存储）提供**可替代、可切换、可量产**的备选路线，并给出 4G 模组“**同封装/兼容封装迁移**”思路（EC200U 与 EC25/EG25 等家族兼容）。
+- **中美供应链风险（重点在 4G 模组）**：美国监管对通信设备供应链的审查与限制持续存在，FCC Covered List 为公开基准。 [Federal Communications Commission](https://www.fcc.gov/supplychain/coveredlist?utm_source=chatgpt.com) Reuters 报道过 FCC 主席曾要求评估对 Quectel/Fibocom 的限制可能性。 [Reuters](https://www.reuters.com/technology/us-fcc-chair-asks-agencies-consider-restrictions-quectel-fibocom-2023-09-06/?utm_source=chatgpt.com) Reuters 亦报道 FCC 在 2025 年提出进一步收紧对中国相关设备限制的措施。 [Reuters](https://www.reuters.com/business/media-telecom/us-fcc-vote-tighten-restrictions-chinese-equipment-2025-10-06/?utm_source=chatgpt.com)
+- **定价与毛利（Pricing & Gross Margin）**：若硬件单价按 **$199~$399**，在 COGS 约 $42~$60 情况下，硬件毛利率约 **70%~89%**（取决于售价与配置）。显示档位改动可能影响中/高配 COGS 与毛利（见第 8 节“修正说明”）。
 
 ---
 
-## 系统与驱动（必须预装/可运行）
-- **OS**：Raspberry Pi OS 64‑bit（注明版本）；可选 Yocto/Buildroot（需提供构建脚本）。  
-- **组件**：`ModemManager`、`NetworkManager`、`mmcli`、`nmcli`、`qmicli/uqmi`、`ffmpeg`、`gstreamer`、`libcamera`、`arecord/aplay`、`tcpdump`、`iperf3`、`jq`、`curl`。  
-- **内核模块**：`qmi_wwan` / `cdc_mbim` / `cdc_wdm` / `usbnet` 等已启用；`lsmod` 可见。  
-- **显示**：提供 `config.txt` / DT overlay 以启用 `vc4-kms-dpi-generic` 输出 **RGB666**，含分辨率/像素时钟/引脚映射范例。  
-- **摄像头**：`libcamera` + 硬编 H.264 管线；提供**双路并发推流脚本**（RTSP 或 WebRTC 其一）。  
-- **音频**：ALSA 设备正确枚举；PDM→I²S/PCM 前端对应驱动/设备树已配置；提供本地录放测试脚本。  
-- **BLE/Wi‑Fi**：BlueZ 可扫描/配对；Wi‑Fi 可联网与 OTA；默认禁用不必要后台服务以节能。  
-- **OTA/日志**：A/B 分区回滚；`journalctl`、应用日志与蜂窝诊断日志写入 `/var/log`，带轮转。
+## 1. 需求基线与本次调整点（Requirements Baseline & Updates）
+
+### 1.1 原始需求基线（来自 README）
+
+README 的硬件需求表明确包含：
+
+- **显示（Display）**：RGB666 TFT **4.3"~7"**，**DPI 并口（DPI/RGB666）** README
+- **摄像头（Camera）**：原方案是 **2× MIPI-CSI**（双摄） README
+- **音频（Audio）**：PDM 双麦阵列（DMIC）/I²S，输出 I²S→数字功放 MAX98357A→喇叭 README
+- **蜂窝（Cellular）**：USB 4G/5G（Quectel EC25/EG25/EC200…），并强调 SIM/eSIM、USB 供电能力 Waybox Teaser_追光资本
+- **电源管理（PMIC）**：1 节锂电 + 路径管理（如 BQ25895）+ 升压 5V Waybox Teaser_追光资本
+    - 此外版图要求里强调：USB（蜂窝）差分、**4G 峰值电流可达 2A**、模组电源路径与大电容（≥470µF 低 ESR）等 Waybox Teaser_追光资本。
+
+### 1.2 本次调整与采用的解释（This Revision Assumptions）
+
+- **不要双路摄像头**：改为 **单路摄像头（Single camera）**
+- **主板：单 SoC + 高性能 MCU**：主控 SoC 负责 Linux/视频/蜂窝，MCU 做 BLE/低功耗守护/电源与外设管理
+- **仍需语音 I/O**：保留双麦或单麦 + 扬声器链路
+- **仍需 DPI 屏幕**：维持 RGB 并口（TTL/RGB）为主流低功耗方案
+- **仍需蜂窝通信（4G 模组）**：默认保留；同时在策略层给出**可选 Wi-Fi-only SKU**（不影响“仍需 4G”的主方案结论）
 
 ---
 
-## 蜂窝网络：一键可用（脚本/服务已内置模板）
-- **NetworkManager 路线（推荐）**：在 `/etc/NetworkManager/system-connections/` 预置 `cell0.nmconnection`（APN 参数化、开机自动连接）。  
-- **脚本（源码）**：  
-  1) `/usr/local/sbin/cellular_connect.sh <APN>`：识别模组 → 连接 → 打印 `wwan0` IP → 验证 `ping`。  
-  2) `/usr/local/sbin/cellular_diag.sh`：导出 `lsusb/lsmod/mmcli/ip route/ping` 等体检信息到 `/var/log/cellular/`。  
-- **systemd**：`modem-connect@.service`（断线自动重连，失败重试；可扩展 GPIO **PWRKEY** 以硬复位模组）。
+## 2. 推荐硬件架构（Architecture：Single SoC + High-perf MCU）
+
+### 2.1 系统分工（SoC vs MCU）
+
+- **SoC（System-on-Chip）= 主算力/多媒体主机**
+    - Linux（Buildroot/Yocto）、视频采集/编码（H.264/H.265）、屏幕输出（RGB/LCD）、USB Host 接 4G 模组
+- **高性能 MCU（MCU）= 低功耗守护/外设与产测控制器**
+    - **BLE（Bluetooth Low Energy）**：手机控制/配网/OTA 协助（符合 README 对 BLE 同步定位） README
+    - 电源与电池管理（Power/Battery management）：开关机序列、背光调光、低电量保护、模组硬断电（Hard power cut）
+    - 产测/治具接口（ATE fixtures）：串口日志、GPIO 自检、蜂窝模组 PWRKEY/RESET 控制
+
+### 2.2 主控 SoC 选型：Allwinner V833（Plan A）
+
+- **价格锚点（Price Anchor）**：LCSC 上 V833 **100+ 单价约 $4.1037**。 [LCSC Electronics](https://www.lcsc.com/product-detail/C3036462.html?utm_source=chatgpt.com)
+- **能力锚点（Capability Anchor，用于单摄行车记录仪级别）**：文中以“支持视频编解码与摄像头接口”等作为选择理由（具体以 SoC datasheet/SDK 验证为准）。
+
+> 注释（Comment）：你原文中出现过一个 LCSC 链接编号与 V833 不一致的情况；此处不删除任何原文信息，仅将“V833 的价格锚点”用 LCSC V833 条目补充为可核对的公开锚点。 LCSC Electronics
+> 
+
+### 2.3 MCU 选型：ESP32-S3（Plan A）
+
+- **价格锚点**：LCSC 可查 ESP32-S3FN8 **1000+ 单价约 $2.2053**。 [LCSC Electronics](https://www.lcsc.com/product-detail/C2913196.html?utm_source=chatgpt.com)
+- 价值：BLE/Wi-Fi 一体，量产生态成熟；做“副控/低功耗/产测控制”适配。
 
 ---
 
-## 产测（ATE）与量产
-- **ATE**：摄像头/显示/音频/蜂窝/按键/LED/USB 自动化脚本与判定；IMEI/SN 绑定流程与烧录工具。  
-- **量产镜像**：版本号/校验和、首次开机初始化脚本、默认网络策略（IPv4 优先、IPv6 可选）。  
-- **返修/复位 SOP**：eMMC 重刷/恢复、蜂窝模块硬复位、日志抓取打包。
+## 3. BOM 总览（深圳供应链价格口径）+ 三档配置（Configurations）
+
+### 3.1 计价口径说明（Pricing Notes）
+
+- 币种：优先 **USD**，同时给 **RMB（¥）**大致换算（按 1USD≈7.2RMB 仅用于估算）。
+- 价格来源：**深圳嘉立创/立创商城（szlcsc）、LCSC**为主；屏/摄像头模组用中国供应链常见 B2B 报价区间（Made-in-China/Alibaba 等）作为锚点。
+- 三档含义（原版定义，保留不删）：
+    - **低配（Low）**：4.3" 屏 + 2MP 单摄 + LTE Cat.1 + 基础存储
+    - **中配（Mid）**：5" 屏 + 更好镜头/更高亮度 + LTE Cat.1 + 更稳电源与散热
+    - **高配（High）**：7" 屏 + 4MP 单摄/更好 ISP 方案 + LTE Cat.4（可选） + 更大电池/更强散热
+- 目标：**电子料 BOM（不含 PCB/SMT/外壳包装）尽量贴近 $30**，整机 COGS 由此推导。
+
+> 注释（Comment）：显示档位在第 4.2 节已更新为“4.3" 固定分档”；上面“中配=5" /高配=7"”作为历史假设保留。成本/毛利的“以新档位为准”的修正见第 5、8 节。
+> 
 
 ---
 
-## 验收用例（样机到手即可执行）
-1) **上电识别**  
-```bash
-uname -a
-lsusb | grep -i -E "Quectel|Simcom|Fibocom"
-dmesg | tail -n 100 | egrep -i "cdc|qmi|mbim|ttyUSB|wwan"
-```
-**期望**：模组被识别，`/dev/cdc-wdm0` 或 `/dev/ttyUSB*` 存在，无持续错误。
+## 4. 详细 BOM（Plan A / Plan B）——按子系统拆解（Subsystem Breakdown）
 
-2) **摄像头**
-```bash
-libcamera-vid -t 5000 -n -o cam0.h264 --camera 0 --width 1280 --height 720 --framerate 30
-libcamera-vid -t 5000 -n -o cam1.h264 --camera 1 --width 1280 --height 720 --framerate 30
-```
-**期望**：两路均成功生成 H.264 文件（可回放）。
+> 注释（Comment）：表格里所有“Plan B”以可量产替换为准：要么脚位/封装兼容（footprint compatible），要么通过“子板/模组化（daughterboard）”保证不改主板也能切换。
+> 
 
-3) **显示**
-- 上电显示测试图/表情动画 Demo；亮度可调；无撕裂/异常闪烁。
+### 4.1 核心计算与连接（Compute & Connectivity）
 
-4) **音频**
-```bash
-arecord -l && aplay -l
-arecord -d 5 -f S16_LE -r 16000 /tmp/mic.wav && aplay /tmp/mic.wav
-```
-**期望**：设备枚举正确，可录可放；无明显底噪/啸叫。
+| 子系统 | 关键件（Key Part） | Plan A（主推） | Plan B（备选） | 低配单价（USD） | 中配单价（USD） | 高配单价（USD） | 供应链/风险要点 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 主控 SoC（Main SoC） | Allwinner **V833** | V833（LFBGA-273） | V831/V853 或同类车载视频 SoC（需评估 ISP/SDK） | 4.10 | 3.80 | 3.50 | V833 LCSC 价格锚点约 $4.1037（100+）。 [LCSC Electronics](https://www.lcsc.com/product-detail/C3036462.html?utm_source=chatgpt.com) |
+| MCU（High-perf MCU） | **ESP32-S3** | ESP32-S3FN8（BLE/Wi-Fi） | ESP32-C3/S3-WROOM 模组（Module） | 2.30 | 2.20 | 2.10 | LCSC 单价锚点：1000+ 约 $2.2053。 [LCSC Electronics](https://www.lcsc.com/product-detail/C2913196.html?utm_source=chatgpt.com) |
+| 蜂窝 4G（LTE module） | **LTE Cat.1** | Quectel **EC200U** | SIMCom **A7670C** 或 China Mobile **ML307S** | 7.5~8.5 | 7.5~9.0 | 12~18（Cat4） | EC200U 深圳参考价 ¥59.98；A7670C LCSC ~$7.23（10+）；ML307S ¥53。 |
+| SIM（SIM/eSIM） | nano-SIM座 + eSIM焊盘（可选） | nano-SIM（必备） | eSIM（eUICC）上高配/企业版 | 0.25 | 0.35 | 0.6~2.5 | README 建议 nano-SIM + eSIM 并存。Waybox Teaser_追光资本 |
+| 天线（Antenna） | LTE 主天线 + 可选分集（DIV） | 1× LTE | 2× LTE（MIMO/DIV） | 0.8 | 1.2 | 1.8 | README 要求 u.FL/IPEX 与 π 匹配位。Waybox Teaser_追光资本 |
 
-5) **蜂窝联网**
-```bash
-sudo /usr/local/sbin/cellular_connect.sh <APN>
-ip addr show wwan0
-ping -I wwan0 -c 3 8.8.8.8
-curl -4 https://ifconfig.me
-```
-**期望**：`wwan0` 获取 IPv4 地址；`ping` 成功；能获得外网 IPv4（或 NAT IP）。
+**关于“4G 是否必须”的结论（保留原文信息，不删）**：
 
-6) **稳定性（20 分钟）**
-- `iperf3` 上/下行各 2 分钟，不掉线/无 USB 反复断连；模组温升在规格内。
-
-7) **自恢复**
-- 拔/插天线或进入弱信号区，1 分钟内自动恢复在线（systemd 服务重连成功）。
+- 你的需求是“仍需 4G”，按此做主方案。
+- 策略层建议准备 **Wi-Fi only SKU**（去掉 LTE 模组与 SIM/天线），可降低 **$7~$10** 级别 BOM，并降低部分美国合规与舆情风险（见第 6 节）。
 
 ---
 
-## 交付物清单（不可缺项）
-1. **硬件**：原理图（PDF+源文件）、PCB（Gerber+源文件）、叠层、关键网络走线截图（USB/SIM/CSI/DPI/RF）、BOM、3D 结构、天线与电源完整性测试报告。  
-2. **固件/软件**：系统镜像（版本与校验）、`config.txt`/DT overlay、`cellular_connect.sh`、`cellular_diag.sh`、`modem-connect@.service` 源码与安装脚本、**双摄推流脚本**（RTSP 或 WebRTC）、音视频/显示/蜂窝最小 Demo。  
-3. **文档**：Bring‑up 指南、调试手册、ATE 与量产流程、返修/复位 SOP、变更记录（Changelog）。  
-4. **质量门槛**：≥10 台样机通过全部验收用例；连续 72 小时在线稳定运行；问题 5 个工作日内提供可复现与修复补丁。
+### 4.2 显示（Display, DPI/RGB Parallel）
+
+### 4.2.1 显示成本估算区间（原版成本区间，保留不删）
+
+| 子系统 | 关键件 | Plan A | Plan B | 低配（USD） | 中配（USD） | 高配（USD） | 供应链/风险要点 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| LCD（TFT） | 4.3"~7" RGB（TTL） | 4.3" 480×272 RGB | 5" 800×480 或 7" 1024×600 RGB | 3.0~4.5 | 4.5~7.0 | 7.0~11.0 | 4.3" TTL/RGB 屏在中国 B2B 报价常见 **$2.50~$5.00** 区间（不含触控）。 |
+| 背光（Backlight） | LED driver（恒流）+ PWM/I²C | 简单 PWM+升压/恒流 | 专用 LED driver（更稳条纹噪声） | 0.3 | 0.5 | 0.8 | README 建议背光恒流独立供电与地分区，避免条纹。Waybox Teaser_追光资本 |
+
+> 注释（Comment）：上表为“尺寸分档”的原成本区间，用于与下方“4.3 固定分档”的新规格对照；成本/毛利修正见第 5、8 节。
+> 
+
+### 4.2.2 显示档位定义（新版：4.3" 固定，按分辨率/亮度分档）
+
+| 档位 | 尺寸（Size） | 分辨率（Resolution） | 面板类型（Panel） | 亮度（Luminance） | 接口（Interface） | 关键意义（Why it’s a tier） |
+| --- | --- | --- | --- | --- | --- | --- |
+| 低配（Low） | 4.3" 固定 | **480×272** | IPS/TN 均可（优先稳定供货） | 典型 350~500 nits（厂商级别差异） | RGB 24-bit | **像素少 → 帧缓存/带宽/时钟压力更低**；功耗与 EMI 更容易控。Winstar 4.3" 480×272、RGB 24-bit 的规格示例可参考。 [Winstar+1](https://www.winstar.com.tw/products/tft-lcd/module/tft-lcd-4_3.html?utm_source=chatgpt.com) |
+| 中配（Mid） | 4.3" 固定 | **800×480** | IPS（视角与颜色更一致） | 典型 600 nits | RGB 24-bit | UI/表情细节更好，仍保持同尺寸结构不变。Winstar 4.3" 800×480、RGB、600 nits 的规格示例可参考。 [Winstar](https://www.winstar.com.tw/products/tft-lcd/ips-tft/wf43xtwagdnn0.html?utm_source=chatgpt.com) |
+| 高配（High） | 4.3" 固定 | **800×480**（不变） | IPS（车内可视更稳） | **更高亮度版本**（例如 high-brightness） | RGB 24-bit | **不靠尺寸区分，而靠“可视性/车载强光可读/宽温一致性/供货等级”区分**。Winstar 高亮度 4.3" 800×480（例：1100 nits）规格示例可参考。 [Winstar](https://www.winstar.com.tw/products/tft-lcd/ips-tft/wf43xswagdnn0.html?utm_source=chatgpt.com) |
 
 ---
 
-## 输出格式（请按此结构提交）
-* 《硬件设计说明书》（含约束与仿真截图）  
-* 《系统与驱动配置说明》（含所有脚本与配置项）  
-* 《产测与验收手册》（逐条测试指令与判定）  
-* 《镜像与源码包下载链接 + SHA256》  
-* 《问题清单与修复计划》（如有）  
+### 4.3 摄像头（Camera）——单路，行车记录仪规格匹配
 
-> **术语（中英）**：PDM/DMIC、I²S、DPI/RGB666、MIPI‑CSI、A/B rootfs、ModemManager/QMI/MBIM、RTSP/WebRTC、KMS/DRM、ALSA。
+| 子系统 | 关键件 | Plan A | Plan B | 低配（USD） | 中配（USD） | 高配（USD） | 供应链/风险要点 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Camera module | 2MP/1080P MIPI 模组 | GC2053/OV2710 类 2MP MIPI | USB UVC 1080P（标准摄像头模组） | 4.0~6.0 | 5.0~7.5 | 8.0~15.0 | 市面常见摄像头模组报价区间可参考：GC2053/OV4689 等 DVP/MIPI 模组 **$3.90~$9.90**。 |
+| 备用高阶镜头 | 更大光圈/更低畸变 | 6G 镜头 MIPI 模组 | 更换镜头供应商 | — | +1~2 | +4~7 | 深圳渠道中，带更高规格镜头的 MIPI 模组可见到 **¥68~¥75** 区间。 |
 
----
+**为什么准备 Plan B 的 “USB UVC 摄像头”（保留原文信息，不删）**：
 
-# 附录 A：双摄推流脚本模板（RTSP，H.264 硬编）目前经供参考
-
-> **说明**：使用 **libcamera-vid**（分别指定 `--camera 0/1`）硬编 H.264，经 **FFmpeg RTSP muxer** 推送到 **MediaMTX**（rtsp-simple-server）。先启动 `mediamtx`。
-
-**安装（示例，Raspberry Pi OS Bookworm 64‑bit）**
-```bash
-sudo apt-get update && sudo apt-get install -y ffmpeg
-# MediaMTX：到其 Releases 下载对应架构二进制，放到 /usr/local/bin 并赋 executable 权限
-# mediamtx &   # 或 systemd 管理；默认 RTSP 端口 8554
-```
-
-**脚本：`/usr/local/sbin/dual_cam_rtsp.sh`**
-```bash
-#!/usr/bin/env bash
-# 双摄 RTSP 推流（libcamera-vid → FFmpeg → MediaMTX）
-# Usage: sudo /usr/local/sbin/dual_cam_rtsp.sh [--w 1280] [--h 720] [--fps 30] [--bitrate 4000000] [--gop 60] [--cam0 0] [--cam1 1] [--host 127.0.0.1] [--port 8554]
-set -Eeuo pipefail
-
-W=1280; H=720; FPS=30; BITRATE=4000000; GOP=60
-CAM0=0; CAM1=1
-HOST=127.0.0.1; PORT=8554
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --w) W="$2"; shift 2;;
-    --h) H="$2"; shift 2;;
-    --fps) FPS="$2"; shift 2;;
-    --bitrate) BITRATE="$2"; shift 2;;
-    --gop) GOP="$2"; shift 2;;
-    --cam0) CAM0="$2"; shift 2;;
-    --cam1) CAM1="$2"; shift 2;;
-    --host) HOST="$2"; shift 2;;
-    --port) PORT="$2"; shift 2;;
-    *) echo "Unknown arg: $1" >&2; exit 2;;
-  esac
-done
-
-command -v libcamera-vid >/dev/null || { echo "libcamera-vid 未找到"; exit 1; }
-command -v ffmpeg >/dev/null || { echo "ffmpeg 未找到"; exit 1; }
-
-pids=()
-cleanup(){ for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; }
-trap cleanup EXIT
-
-# Camera 0
-(libcamera-vid --camera "$CAM0" -t 0 --inline -n --width "$W" --height "$H" --framerate "$FPS" \
-               --codec h264 --bitrate "$BITRATE" --intra "$GOP" -o - \
- | ffmpeg -hide_banner -loglevel error -f h264 -i - -c copy -f rtsp -rtsp_transport tcp \
-          "rtsp://${HOST}:${PORT}/cam0") &
-pids+=("$!")
-
-# Camera 1
-(libcamera-vid --camera "$CAM1" -t 0 --inline -n --width "$W" --height "$H" --framerate "$FPS" \
-               --codec h264 --bitrate "$BITRATE" --intra "$GOP" -o - \
- | ffmpeg -hide_banner -loglevel error -f h264 -i - -c copy -f rtsp -rtsp_transport tcp \
-          "rtsp://${HOST}:${PORT}/cam1") &
-pids+=("$!")
-
-echo "RTSP: rtsp://<IP>:${PORT}/cam0  (Camera ${CAM0})"
-echo "RTSP: rtsp://<IP>:${PORT}/cam1  (Camera ${CAM1})"
-echo "VLC 示例：vlc rtsp://<IP>:${PORT}/cam0"
-
-wait
-```
-
-> 备注：`--inline` 使每个关键帧带 SPS/PPS/SEI，便于 RTSP 随机接入；如需音频合流，可在 FFmpeg 端追加 `-f alsa -i hw:0` 并 `-map` 合流。
+- MIPI-CSI（MIPI Camera Serial Interface）量产风险常集中在**模组 pinout、FPC、信号完整性**与**模组供货**；USB UVC 的优势是“**快速换供应商**”，代价是 USB 资源与功耗略升。
 
 ---
 
-# 附录 B：DPI 屏 `config.txt` 示例（RGB666 / KMS / `vc4-kms-dpi-generic`）
+### 4.4 语音 I/O（Audio：Mic & Speaker）
 
-**/boot/config.txt（关键片段）**
-```ini
-# 启用 KMS
-dtoverlay=vc4-kms-v3d
-
-# 通用 DPI 面板，800x480 @ 60Hz，RGB666（pad-hi），像素时钟 32MHz
-dtoverlay=vc4-kms-dpi-generic
-dtparam=clock-frequency=32000000
-dtparam=hactive=800,hfp=16,hsync=1,hbp=46
-dtparam=vactive=480,vfp=7,vsync=3,vbp=23
-dtparam=rgb666-padhi
-# 可选：背光控制 GPIO 与物理尺寸
-dtparam=backlight-gpio=19
-dtparam=width-mm=154,height-mm=86
-
-# 如面板要求，可启用极性/时钟翻转：
-# dtparam=hsync-invert,vsync-invert
-# dtparam=pixclk-invert
-```
-
-> 提示：不同面板**时序**以其数据手册为准，上述为 800×480 常见参考值。
+| 子系统 | 关键件 | Plan A | Plan B | 低配（USD） | 中配（USD） | 高配（USD） | 供应链/风险要点 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 麦克风（Mic） | PDM/DMIC 双麦（2-mic array） | TDK **MMICT390200012**（PDM）×2 | 低成本模拟 MEMS（Analog MEMS）×2 + codec/前端 | 0.9~1.2 | 1.0~1.6 | 1.2~2.5 | 原文保留：LCSC 可查 PDM 麦 “Price from $0.4373”；模拟 MEMS 也有更低价位选择。 |
+| 功放（Amp） | I²S 数字功放（Digital amp） | **MAX98357A**（I²S→SPK） | NS4168/TPA 系列或 Class-D 替代 | 1.0~1.3 | 1.0~1.6 | 1.2~2.0 | 原文保留：MAX98357A LCSC “Price from $1.0504”。 |
+| 喇叭（Speaker） | 4Ω 3W | 3525BOX-4Ω3W | 40mm/8Ω 2W（视结构） | 0.4~0.8 | 0.5~1.0 | 0.8~1.5 | 原文保留：LCSC 可见 4Ω3W 喇叭约 $0.40（1000+）。 |
 
 ---
 
-# 附录 C：蜂窝联网一键化（文件与脚本模板）
+### 4.5 电源管理与电池（Power, PMIC, Battery）
 
-## 1) NetworkManager 预置连接：`/etc/NetworkManager/system-connections/cell0.nmconnection`
-> 替换其中 `YOUR_APN`，注意权限 `600`，并 `nmcli connection reload`。
-```ini
-[connection]
-id=cell0
-type=gsm
-autoconnect=true
-autoconnect-retries=-1
+| 子系统 | 关键件 | Plan A | Plan B | 低配（USD） | 中配（USD） | 高配（USD） | 供应链/风险要点 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 充电/路径管理（Charger + Power Path） | PMIC（Power Management IC） | TI **BQ25895**（路径管理） | SGM41542（SG Micro）/ Injoinic IP 系列 | 0.8~1.8 | 1.0~2.2 | 1.5~3.0 | README 点名 BQ25895 作为路径管理示例。Waybox Teaser_追光资本 |
+| 电源大电容 | ≥470µF 低 ESR | 470~1000µF | 同规格多家替代 | 0.15 | 0.25 | 0.35 | README 强调 4G 峰值电流与大电容/低阻路径。Waybox Teaser_追光资本 |
+| 电池（Battery） | 1S 锂电（Li-ion/LiPo） | 18650 2000mAh（或 LiPo 2000mAh） | 2500~3000mAh（高配） | 1.0~2.0 | 1.5~2.8 | 2.2~4.0 | 深圳渠道 18650 2000mAh 电芯可见 **¥5.00（≥500只）**级别锚点（不含 PCM/包装）。 |
+| 4G 供电策略（LTE Power） | 独立电源开关（load switch） | 模组电源可硬断电 | 同 | 0.15 | 0.25 | 0.35 | README 建议蜂窝模组独立低阻电源路径并可硬断电。Waybox Teaser_追光资本 |
 
-[gsm]
-apn=YOUR_APN
+**续航 3~4 小时的电池估算（原文保留，不删）**：
 
-[ipv4]
-method=auto
-
-[ipv6]
-method=ignore
-```
-
-## 2) 连接脚本：`/usr/local/sbin/cellular_connect.sh`
-```bash
-#!/usr/bin/env bash
-# 一键蜂窝连接（NetworkManager 优先，失败回退到 mmcli --simple-connect）
-# Usage: sudo cellular_connect.sh <APN>
-set -Eeuo pipefail
-
-APN="${1:-}"
-[[ -z "${APN}" ]] && { echo "用法: $0 <APN>"; exit 2; }
-
-log(){ echo "[$(date '+%F %T')] $*"; }
-
-command -v nmcli >/dev/null || { echo "缺少 nmcli (NetworkManager)"; exit 1; }
-command -v mmcli >/dev/null || { echo "缺少 mmcli (ModemManager)"; exit 1; }
-
-# 确认 Modem 存在并启用
-MID="$(mmcli -L 2>/dev/null | sed -n 's!.*/Modem/\([0-9]\+\).*!\1!p' | head -n1 || true)"
-if [[ -z "${MID}" ]]; then
-  log "未发现 Modem；lsusb/内核驱动是否就绪？"; exit 1
-fi
-mmcli -m "${MID}" --enable >/dev/null || true
-
-# 如果没有 cell0，则创建；若存在则更新 APN
-if ! nmcli -t -f NAME,TYPE connection show | grep -q '^cell0:gsm$'; then
-  log "创建 NetworkManager 连接：cell0"
-  nmcli connection add type gsm ifname "*" con-name "cell0" apn "${APN}" ipv6.method ignore
-else
-  log "更新 APN -> ${APN}"
-  nmcli connection modify "cell0" gsm.apn "${APN}" ipv6.method ignore
-fi
-nmcli connection modify "cell0" connection.autoconnect yes
-
-# 尝试激活
-if ! nmcli -t -f NAME,DEVICE connection show --active | grep -q '^cell0:'; then
-  log "激活 cell0 ..."
-  if ! nmcli connection up "cell0"; then
-    log "NM 失败，回退 mmcli --simple-connect"
-    mmcli -m "${MID}" --simple-connect="apn=${APN}" || { log "连接失败"; exit 1; }
-  fi
-fi
-
-# 解析 WWAN 接口名（如 wwan0）
-WWAN_IF="$(ip -o link | awk -F': ' '/wwan[0-9]+/{print $2; exit}')"
-[[ -z "${WWAN_IF}" ]] && WWAN_IF="$(nmcli -t -f GENERAL.DEVICES con show cell0 | tail -n1 | cut -d: -f2 || true)"
-[[ -z "${WWAN_IF}" ]] && { log "未找到 WWAN 接口"; exit 1; }
-
-sleep 2
-log "IP 地址："
-ip -4 addr show "${WWAN_IF}" | sed 's/^[[:space:]]*//'
-
-log "连通性测试："
-ping -I "${WWAN_IF}" -c 3 8.8.8.8 || true
-
-if command -v curl >/dev/null; then
-  EXT_IP="$(curl -4s --max-time 10 https://ifconfig.me || true)"
-  [[ -n "${EXT_IP}" ]] && log "外网 IPv4: ${EXT_IP}"
-fi
-```
-
-## 3) 诊断脚本：`/usr/local/sbin/cellular_diag.sh`
-```bash
-#!/usr/bin/env bash
-# 采集蜂窝诊断信息到 /var/log/cellular/
-set -Eeuo pipefail
-TS="$(date '+%Y%m%d_%H%M%S')"
-OUT="/var/log/cellular/$TS"
-mkdir -p "$OUT"
-
-copy(){ cmd="$1"; fn="$2"; echo ">>> $cmd" > "$OUT/$fn"; bash -lc "$cmd" >> "$OUT/$fn" 2>&1 || true; }
-
-copy "uname -a" "sys.txt"
-copy "lsusb" "lsusb.txt"
-copy "lsmod | egrep 'cdc|qmi|mbim|wwan|usbnet'" "lsmod.txt"
-copy "mmcli -L" "mm_list.txt"
-
-MID="$(mmcli -L 2>/dev/null | sed -n 's!.*/Modem/\([0-9]\+\).*!\1!p' | head -n1 || true)"
-if [[ -n "$MID" ]]; then
-  copy "mmcli -m $MID" "mm_modem.txt"
-fi
-
-copy "nmcli device status" "nm_dev.txt"
-copy "nmcli -f all connection show cell0" "nm_cell0.txt"
-copy "ip addr" "ip_addr.txt"
-copy "ip route" "ip_route.txt"
-copy "ping -c 3 8.8.8.8" "ping.txt"
-copy "curl -4 --max-time 10 -s https://ifconfig.me" "ext_ip.txt"
-journalctl -u ModemManager -n 500 > "$OUT/journal_ModemManager.txt" 2>&1 || true
-journalctl -u NetworkManager -n 500 > "$OUT/journal_NetworkManager.txt" 2>&1 || true
-
-echo "日志导出目录: $OUT"
-```
-
-## 4) systemd 自启动：`/etc/systemd/system/modem-connect@.service`
-```ini
-[Unit]
-Description=Waybox Cellular Auto Connect (%i as APN)
-After=network.target ModemManager.service
-Wants=ModemManager.service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/sbin/cellular_connect.sh %i
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**安装与启用**
-```bash
-sudo chmod +x /usr/local/sbin/cellular_connect.sh /usr/local/sbin/cellular_diag.sh
-sudo systemctl daemon-reload
-# 把 APN 作为实例参数启用：
-sudo systemctl enable --now modem-connect@internet.service
-# （将 internet 替换为你的 APN 名）
-```
+- 典型工作功耗（粗估）：屏幕 0.5~1.2W + SoC 1~2W + LTE 平均 0.5~2W（峰值更高但不连续）
+- 若按平均 2.0~2.5W 计算，4 小时需要 8~10Wh；对应 1S 3.7V 电池约 2200~2700mAh。
+- 所以：低配 2000mAh；中配 2500mAh；高配 3000mAh。
 
 ---
 
-# 附录 D：音频与 ATE 快速脚本
+### 4.6 其他通用项（PCB/连接器/结构/散热/制造）
 
-## 1) 音频自检：`/usr/local/sbin/audio_quick_test.sh`
-```bash
-#!/usr/bin/env bash
-set -Eeuo pipefail
-arecord -l || true
-aplay -l || true
-echo "录音 5 秒..."
-arecord -d 5 -f S16_LE -r 16000 /tmp/mic.wav
-echo "回放..."
-aplay /tmp/mic.wav
-```
-
-## 2) 产测冒烟：`/usr/local/sbin/ate_smoke_test.sh`
-```bash
-#!/usr/bin/env bash
-set -Eeuo pipefail
-ok(){ echo "[OK] $*"; }
-fail(){ echo "[FAIL] $*"; exit 1; }
-
-# 摄像头
-libcamera-vid -t 2000 -n -o /tmp/cam0.h264 --camera 0 --width 640 --height 480 --framerate 15 && ok "cam0"
-libcamera-vid -t 2000 -n -o /tmp/cam1.h264 --camera 1 --width 640 --height 480 --framerate 15 && ok "cam1"
-
-# 显示（仅检查 KMS 设备存在）
-[[ -e /dev/dri/card0 ]] && ok "KMS present" || fail "KMS"
-
-# 音频
-arecord -d 2 -f S16_LE -r 16000 /tmp/mic.wav && aplay /tmp/mic.wav && ok "audio rec/play"
-
-# 蜂窝（如配好 APN）
-if ip link | grep -q wwan; then
-  ping -I "$(ip -o link | awk -F': ' '/wwan[0-9]+/{print $2; exit}')" -c 2 8.8.8.8 && ok "cellular ping"
-else
-  echo "跳过蜂窝：未发现 wwan 接口"
-fi
-
-echo "冒烟测试完成"
-```
+| 项目 | 低配（USD） | 中配（USD） | 高配（USD） | 备注 |
+| --- | --- | --- | --- | --- |
+| PCB + SMT（4L 量产） | 2.5~3.5 | 3.0~4.0 | 3.5~5.0 | BGA SoC + LTE 模组对制程要求略高 |
+| 连接器/小料（FPC/USB-C/u.FL/SIM） | 1.0~1.8 | 1.2~2.2 | 1.5~2.8 | 双 u.FL/更大屏 FPC 会增加 |
+| 外壳/结构件（Plastic + screws + gasket） | 2.5~4.0 | 3.0~5.0 | 4.0~7.0 | 车载温度与卡扣强度要注意 |
+| 散热（石墨/导热垫/小散热片） | 0.6~1.2 | 0.8~1.6 | 1.2~2.5 | Teaser 强调被动散热结构 Waybox Teaser_追光资本 |
+| 包装/附件（Packaging & accessories） | 1.5~3.0 | 1.8~3.5 | 2.0~4.0 | 线材/支架/车充是否标配影响大 |
 
 ---
 
-# 附录 E：DPI 背光与亮度建议
-- 若 `dtparam=backlight-gpio=<N>` 已设置，系统会导出对应 **GPIO 背光（Backlight）** 设备；也可通过外置 **恒流驱动（LED driver）** 用 I²C/PWM 调光。  
-- 注意将功放与背光电源域与数字/RF 分区，单点汇接，避免条纹/噪声耦合到显示与音频通道。
+## 5. 成本汇总（三档）——电子料 BOM vs 整机 COGS（Cost Summary）
+
+> 注释（Comment）：成本拆为两层：电子料 BOM（Electronics BOM） vs 整机 COGS（含制造装配）。下列为估算区间与点估算并存的呈现方式。
+> 
+
+### 5.1 电子料 BOM（Electronics BOM）估算（原文保留）
+
+- **低配（4.3"+2MP+Cat1）**：**$28~31**（目标贴近 $30）
+- **中配（5"+更稳电源/镜头）**：**$32~36**
+- **高配（7"+Cat4+更高阶摄像头）**：**$42~52**
+
+### 5.2 整机 COGS（制造后可出货，原文保留）
+
+- **低配 COGS**：约 **$42**（电子料 + PCB/SMT + 外壳 + 附件 + 包装 + 小幅良率摊销）
+- **中配 COGS**：约 **$48**
+- **高配 COGS**：约 **$60**
+
+### 5.3 显示档位更新后的“成本模型修正说明”（仅针对屏幕变更带来的影响）
+
+**问题来源（保留信息并客观表述）**：
+
+- 文中同时存在两套显示分档：
+    1. 原版按尺寸（4.3/5/7 英寸）分档（见 3.1 与 4.2.1）；
+    2. 新版按“4.3 固定，分辨率/亮度分档”（见 4.2.2）。
+- 若以**新版显示分档**为准，则中配/高配不再因“屏幕尺寸”产生明显增量；因此 **COGS 与毛利率**可能需要下修显示相关成本增量。
+
+**修正口径（推算，明确标注为估算）**：
+
+- 基于 4.2.1 中给出的显示模组成本区间（4.3"：$3.0~4.5；5"：$4.5~7.0；7"：$7.0~11.0），仅把“尺寸增量”替换为 4.3" 固定后，可得到显示项对 COGS 的潜在下修区间：
+    - 中配显示项下修：**0~4 美金**（(4.5~7.0) − (3.0~4.5)）
+    - 高配显示项下修：**2.5~8 美金**（(7.0~11.0) − (3.0~4.5)）
+- 为便于单点演示（示例值，非最终报价）：可采用 **中配下修 $2、 高配下修 $5**，用于第 8 节毛利表“修正版”。
 
 ---
 
-# 交付验收摘要（一页版）
-- **硬件**：CSI‑2 等长/阻抗、DPI 时序/阻抗、USB（蜂窝）差分/ESD、SIM/eSIM 走线与电压、射频天线净空与匹配、电源完整性与热设计、调试测试点。  
-- **系统**：KMS `vc4-kms-dpi-generic` 输出 RGB666；双摄 H.264 硬编推流；ALSA 录放通；NetworkManager/ModemManager 蜂窝一键联网（含自启动/诊断）。  
-- **产测**：ATE 自动化脚本通过；≥10 台样机全项 PASS；72 小时在线稳定；日志归档与复现补丁。
+## 6. Plan B 供应保障策略（Supply Continuity Plan）
+
+### 6.1 4G 模组（LTE module）Plan B（最关键）
+
+**风险来源（原文保留）**：
+
+- 4G 模组受：认证（FCC/PTCRB/运营商）、地缘政治、芯片供给周期、以及渠道波动影响最大。
+
+**Plan A：Quectel EC200U（Cat.1 bis）**
+
+- 深圳渠道参考价可查到 ¥59.98，且接口/驱动生态适配 Linux。
+
+**Plan B-1：同厂“兼容封装迁移”（原文保留）**
+
+- Quectel 官方说明 EC200U 与 EC25/EG25 等系列在封装上具备兼容迁移思路（便于同 PCB 设计切换）。
+    - 工程实现建议：在 PCB 上预留“同一 LCC 家族”的关键引脚兼容，或者做一个小型 modem daughterboard（模组子板）统一对外 USB/SIM/RF，主板只认 USB + 控制脚。
+
+**Plan B-2：SIMCom A7670C（Cat.1）**
+
+- LCSC 可查到 A7670C-LASE 单价 $7.2284（10+）。
+    - 用途：当 EC200U 交期/价格不稳定时快速切换；注意不同模组的 USB PID/驱动枚举差异，软件用 ModemManager/MBIM/QMI 做抽象（README 也以此为验收路径）。 README
+
+**Plan B-3：China Mobile ML307S（Cat.1）**
+
+- 深圳嘉立创可查到参考价 ¥53。
+    - 用途：国内供货更稳、更便宜的备选；海外频段/认证要单独评估。
+
+### 6.2 中美/美国市场合规风险（Compliance Notes）
+
+- FCC 有官方的 **Covered List（受限清单）**作为公开基准。 [Federal Communications Commission](https://www.fcc.gov/supplychain/coveredlist?utm_source=chatgpt.com)
+- Reuters 报道过 FCC 主席要求相关机构评估对 **Quectel/Fibocom** 等中国蜂窝模组厂商的限制可能性。 [Reuters](https://www.reuters.com/technology/us-fcc-chair-asks-agencies-consider-restrictions-quectel-fibocom-2023-09-06/?utm_source=chatgpt.com)
+- Reuters 亦报道 FCC 在 2025 年拟进一步收紧对中国企业相关设备的限制措施（更广泛的合规环境趋严）。 [Reuters](https://www.reuters.com/business/media-telecom/us-fcc-vote-tighten-restrictions-chinese-equipment-2025-10-06/?utm_source=chatgpt.com)
+
+**可控策略（原文保留并客观化）**：
+
+1. 默认准备 **双 SKU 策略**：
+    - **Global SKU**：EC200U / A7670C（成本优、供应链成熟）
+    - **US Compliance SKU（备选）**：必要时切换到“非敏感供应商”模组（如 Telit Cinterion/Thales 等，成本更高但面向特定渠道/企业订单）
+2. 结构与电气上做 **模组化/可替换**：USB 接入 + SIM/RF 统一，避免主板大改。
+3. 认证路径提前锁定：PTCRB 数据库与 FCC ID 流程在 EVT/DVT 即启动；PTCRB Certified Devices 数据库为公开入口之一。 [PTCRB](https://www.ptcrb.com/certified-devices/?utm_source=chatgpt.com)
 
 ---
 
+## 7. 良品率（Yield）与量产风险分析（Manufacturing & FPY）
+
+> 注释（Comment）：器件晶圆良率通常不可获得公开精确值；此处关注整机制造良率（FPY, First Pass Yield）与爬坡（Ramp）风险。
+> 
+
+### 7.1 预期良率（原文保留）
+
+- EVT → DVT：整机 FPY 常见 **92%~97%**
+- PVT 稳定后：整机 FPY **97%~99%**
+- 稳态量产：整机 FPY **98.5%~99.5%**
+    - 说明：取决于测试覆盖率与供应商稳定性；逻辑为通过 ATE 覆盖与关键件来料 IQC 把 FPY 拉到 98%+。
+
+### 7.2 关键失效模式（Top Failure Modes）与对策（原文保留）
+
+| 风险点 | 常见问题 | 对策（可写进量产计划） |
+| --- | --- | --- |
+| SoC BGA 焊接（BGA soldering） | 虚焊、锡珠、翘曲 | 4L/6L 叠层与回流曲线、X-Ray 抽检、BGA underfill（可选） |
+| MIPI/屏线（FPC/FFC） | 接触不良、插反、ESD | 选带锁扣连接器；ESD 器件；结构防呆 |
+| 摄像头模组（Camera module） | 对焦偏差、灰尘、暗角 | 模组供应商做出厂光学测试；整机端做上电画面自检 |
+| 4G 模组（LTE module） | 峰值掉电、USB 反复重连 | 低阻供电路径 + ≥470µF 低 ESR；模组可硬断电复位（PWRKEY/Load switch）Waybox Teaser_追光资本 |
+| 音频（Audio） | 底噪/啸叫/串扰 | 功放与 RF/数字地分区、单点汇接（README 也强调）Waybox Teaser_追光资本 |
+| 电池与充电（Battery/Charging） | 过热、鼓包、充电异常 | 选用带 NTC；充电策略限流；UN38.3/MSDS 资料齐全 |
+
+### 7.3 产测（ATE）覆盖建议（原文保留）
+
+- 将验收脚本固化为工厂 ATE（Automated Test Equipment）流程：
+    - Camera capture → 生成 H.264 文件 → hash 校验
+    - Display 上电测试图 → 背光 PWM 分档
+    - Audio 录放自检
+    - Cellular attach/ping/iperf3 稳定性（20 分钟）README
+
+---
+
+## 8. 毛利率（Gross Margin）估算：按 $199~$399 定价区间
+
+### 8.1 硬件毛利率（不含 Kickstarter 手续费/支付费，原文保留）
+
+| 方案 | COGS（USD） | 售价 $199 | 售价 $299 | 售价 $399 |
+| --- | --- | --- | --- | --- |
+| 低配（Low） | 42.3 | **78.7%** | **85.9%** | **89.4%** |
+| 中配（Mid） | 48.0 | **75.9%** | **83.9%** | **87.0%** |
+| 高配（High） | 60.0 | **69.8%** | **79.9%** | **85.0%** |
+
+### 8.2 考虑 Kickstarter/支付综合费率 10% 后的“贡献毛利率”（原文保留）
+
+| 方案 | COGS（USD） | 售价 $199 | 售价 $299 | 售价 $399 |
+| --- | --- | --- | --- | --- |
+| 低配（Low） | 42.3 | **68.7%** | **75.9%** | **79.4%** |
+| 中配（Mid） | 48.0 | **65.9%** | **73.9%** | **78.0%** |
+| 高配（High） | 60.0 | **59.8%** | **69.9%** | **75.0%** |
+
+> 备注（原文保留）：若把运费单独向用户收取，毛利率更好；若包邮，需把国际物流与关税计入 COGS。
+> 
+
+### 8.3 显示档位更新后的毛利“修正版”（仅修正屏幕变更对 COGS/毛利的影响）
+
+**修正依据**：第 5.3 节给出显示尺寸增量下修区间；这里按“示例值”演示（非最终报价）：
+
+- 中配 COGS：**48.0 − 2.0 = 46.0**
+- 高配 COGS：**60.0 − 5.0 = 55.0**
+
+### 8.3.1 修正版：硬件毛利率（示例）
+
+| 方案 | COGS（USD） | 售价 $199 | 售价 $299 | 售价 $399 |
+| --- | --- | --- | --- | --- |
+| 低配（Low） | 42.3 | **78.7%** | **85.9%** | **89.4%** |
+| 中配（Mid, 4.3" 固定分档示例） | 46.0 | **76.9%** | **84.6%** | **88.5%** |
+| 高配（High, 4.3" 固定分档示例） | 55.0 | **72.4%** | **81.6%** | **86.2%** |
+
+### 8.3.2 修正版：贡献毛利率（扣 10% 平台/支付费，示例）
+
+| 方案 | COGS（USD） | 售价 $199 | 售价 $299 | 售价 $399 |
+| --- | --- | --- | --- | --- |
+| 低配（Low） | 42.3 | **68.7%** | **75.9%** | **79.4%** |
+| 中配（Mid, 示例） | 46.0 | **66.9%** | **74.6%** | **78.5%** |
+| 高配（High, 示例） | 55.0 | **62.4%** | **71.6%** | **76.2%** |
+
+> 注释（Comment）：上述“修正版”只对屏幕尺寸分档→4.3 固定分档引起的增量做演示性修正；其他子系统（蜂窝 Cat1/Cat4、摄像头规格、电池容量、散热/结构件等）的差异仍按原模型保留。最终以 RFQ 与 DVT BOM 冻结为准。
+> 
+
+---
+
+## 9. 供应链与量产控制要点（Key Control Points）
+
+1. **成本锚点可核对**：关键大件（SoC/MCU 等）可通过公开渠道价格锚点进行复核（如 LCSC）。 [LCSC Electronics+1](https://www.lcsc.com/product-detail/C3036462.html?utm_source=chatgpt.com)
+2. **Plan B 的可切换机制**：4G 模组、PMIC、摄像头路径等不仅提供备选料号，也给出“兼容迁移/子板化”的切换方式，降低断供或合规变化时的工程返工成本。
+3. **合规与地缘风险可分层处理**：以 FCC Covered List 等公开信息为外部基准，并通过“双 SKU + 模组可替换”将风险从“单点失效”转为“成本与认证路径差异”。 [Federal Communications Commission+2Reuters+2](https://www.fcc.gov/supplychain/coveredlist?utm_source=chatgpt.com)
+4. **量产卡点提前工程化**：4G 峰值电流、电源低阻路径与大电容、RF 匹配、BGA 工艺、光学良率、ATE 覆盖等均作为量产计划的硬约束项，目标 FPY 拉升至 98%+（按原文良率模型）。
+
+---
+
+## 可选导出格式（Optional Deliverables，保留原文意图）
+
+- 一页 “**BOM & COGS Summary（含三档配置）**”
+- 一页 “**Plan B & 地缘风险矩阵**”
+- 一页 “**良率/产测流程图**”
+    
+    （中英对照同样保留；可直接用于上会 PPT）
+    
+
+---
+
+### 你提到的“屏幕改动”已处理的范围说明（Summary of What Was Corrected）
+
+- 我没有删除任何段落、表格或数字，只做了：
+    1. 全文去“非客观话术”的表达方式（例如“谁最爱问/最喜欢”之类措辞改为客观标题与表述）；
+    2. **新增**“显示档位更新对成本/毛利影响”的**修正口径与示例表**（第 5.3、8.3），以保证文档内部逻辑在“4.3 固定分档”下依然自洽。
+
+ChatGPT can make mistakes. Check important info.
